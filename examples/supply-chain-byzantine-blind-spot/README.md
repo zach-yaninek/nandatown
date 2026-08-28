@@ -247,7 +247,7 @@ Two open PRs overlap in part:
 - **#87** reports a validator blind spot on `consensus`, but one related to liveness.
 
 The class of failure is distinct. An integrity violation that no
-validator can observe at any magnitude, where the multi-hop chain makes the
+validator can observe at any magnitude. Further, the multi-hop chain makes the
 difference between a caught and an uncaught failure depend on the corrupted agent's
 position in the pipeline.
 
