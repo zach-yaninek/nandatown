@@ -1,8 +1,8 @@
 # Supply chain: byzantine corruption that both validators call clean
 
 **One setting changed:** `failures.byzantine_agents`, `0.0` → `0.25`, on the bundled
-`supply_chain` scenario. Seed, agent count, round count, layer stack and drop rate
-are all left at their shipped values.
+`supply_chain` scenario. I left seed, agent count, round count, layer stack, and drop rate
+at their shipped values.
 
 **Result:** every message sent by the byzantine agent arrives as random bytes, and
 both `supply_chain` validators report `PASS`. Every metric in `nest report` is
@@ -10,20 +10,20 @@ identical to the baseline. Three separate tools report a clean run.
 
 ---
 
-## Why I chose this setting
+## Why this setting?
 
-`message_drop` is the knob the quickstart itself suggests, so I wanted something
-less travelled. `byzantine_agents` is the only failure mode in `FailureConfig` that
-attacks **message integrity** rather than message **delivery**, which made it the
-more interesting test of what the validators actually check.
+`message_drop` is the knob the quickstart itself suggests, so I wanted to try
+something different. `byzantine_agents` is the only failure mode in `FailureConfig` that
+attacks message integrity instead of message delivery. I found this interesting
+because I wanted to verify that the validators would catch this.
 
 The other four settings are partition controls that need a nested `groups` dict, so
-`byzantine_agents` was the only single scalar left that changes agent behaviour
+`byzantine_agents` was the only single scalar left that changes agent behavior
 rather than the volume of the run.
 
 ## Hypothesis, recorded before running
 
-From the `description` field of `my.yaml`, committed before the experiment was run:
+From the `description` field of `my.yaml`, committed before I ran the experiment:
 
 > Sets byzantine_agents = 0.25 to verify the validator will flag it.
 
@@ -32,19 +32,19 @@ shipment: → delivered:` grammar, and `supply_chain_pipeline` to fail on the
 malformed hops.
 
 The commit order in this branch shows the prediction was recorded first: the
-scenario lands in one commit, the trace that contradicts it in the next.
+scenario followed by the trace that contradicts it.
 
-## What actually happened
+## Results
 
 ```
 PASS supply_chain_pipeline - all hops present
 PASS supply_chain_no_lost  - 15/15 materials delivered
 ```
 
-Both checks pass. Message volume is unchanged from the baseline: 128 events, 60
+Both checks passed. The message volume did not change from the baseline: 128 events, 60
 sends, 60 receives, nothing dropped.
 
-But the trace holds the same message twice, once as sent and once as delivered:
+However, the trace holds the same message twice, once as sent and once as delivered:
 
 ```jsonc
 {"agent":"retailer-0","kind":"send","to":"supplier-0",
@@ -54,8 +54,9 @@ But the trace holds the same message twice, once as sent and once as delivered:
  "msg":"�����o�P�c�N\ba��l����d�3Xg","size":33}
 ```
 
-All 15 messages from `retailer-0` are destroyed this way. The other three senders
-are untouched:
+`retailer-0` destroyed all 15 messages this way. The other three senders
+are untouched (see the screenshot in the form submission and further below 
+for the script I used):
 
 | sender | garbled / total received |
 |---|---|
@@ -68,12 +69,12 @@ are untouched:
 the control and the experiment. Every metric matches exactly — `success_rate`
 1.0000, `delivery_rate` 1.0000, `message_count` 120, `dropped_count` 0.
 
-## Investigation: why nothing sees it
+## Investigation
 
-Two implementation details combine, neither wrong on its own.
+Two implementation details explain what I found.
 
 **Corruption is applied at delivery.** The simulator records the send from the
-original payload, then scrambles a separate copy for the receiver
+original payload. It then scrambles a separate copy for the receiver
 (`packages/nest-core/nest_core/sim/simulator.py:384`):
 
 ```python
@@ -94,22 +95,21 @@ for ev in events:
         continue
 ```
 
-So they reconstruct the protocol from send records alone. A payload destroyed
+The validators reconstruct the protocol from the send records alone. A payload destroyed
 between sender and receiver leaves that reconstruction perfectly intact. The
-corruption is invisible **by construction**, not by bad luck.
+corruption is therefore invisible by construction.
 
-Worth being precise about the scope, because it makes the gap sharper rather than
-softer: this is *not* a limitation of the validator framework. Five validators
-elsewhere in the same file do inspect `receive` events (lines 2483, 2711, 2833,
-4453, 4786). The capability exists and is used for other scenarios. It simply is
-not applied to `supply_chain`, where a multi-hop chain of custody is exactly the
-setting in which delivered-payload integrity matters most.
+This is not a limitation of the validator framework. Five validators
+elsewhere in the same file inspect `receive` events (lines 2483, 2711, 2833,
+4453, 4786). The capability exists and is used for other scenarios. But it currently
+is not applied to `supply_chain`. That being said, a multi-hop chain of custody is 
+an enivronment in which delivered-payload integrity matters a lot.
 
-Put precisely: the validators do not check that a message *arrived* as sent. They
-check that the sender *claimed* to send it. Under byzantine corruption those are
-different facts, and only the weaker one is verified.
+In summary, the validators do not check that a message arrived as sent. They
+check that the sender claimed to send it. This byzantine corruption experiment 
+demonstrated that only the latter (weaker) condition is verified.
 
-## What the validators do catch
+## What the validators catch
 
 Raising the same setting shows where the blind spot ends. The simulator marks
 `max(1, int(agents * fraction))` agents, so a four-agent chain moves in whole
@@ -123,26 +123,25 @@ agents:
 | 0.75 | 3 | 15 | PASS | **FAIL** — 15 sent, 0 delivered |
 
 `0.01` and `0.25` produce byte-identical traces, since `max(1, ...)` means any
-nonzero value corrupts at least one whole agent. There is no gentle setting here.
+nonzero value corrupts at least one whole agent.
 
-At `0.50` and above a mid-chain agent is necessarily included. It receives bytes it
-cannot parse, fails to recognise them as a work order, and stops forwarding, so the
+At `0.50` and above, a mid-chain agent is necessarily included. It receives bytes it
+cannot parse, fails to recognize them as a work order, and stops forwarding, so the
 pipeline truncates from 60 sends to 45 and then 15.
 
-Note what that failure actually is. The validator did not detect corruption. It
-detected **silence** — messages never sent because a broken agent went quiet. The
-integrity violation stays invisible at every fraction; only its second-order
-consequence is ever caught. At `0.25` the corrupted agent happens to sit at the
-terminal hop, where nothing downstream depends on its output, so there is no
-second-order consequence to leak and the run reports clean.
+Note the details of this failure. The validator did not detect corruption; it
+detected the silence. It caught messages that were never sent because
+a broken agent went quiet. The integrity violation stayed invisible at every fraction, though. 
+Only its second-order consequence is ever caught. At `0.25`, the corrupted agent happens to sit at the terminal hop, where nothing downstream depends on its output. In that case, there is no
+second-order consequence to leak, and the run reports clean.
 
-## Hypothesis for the next experiment: this should be seed-sensitive
+## Hypothesis for the next experiment: likely seed sensitivity
 
 This experiment held `seed: 42` fixed, since the brief asks for exactly one changed
-setting and `seed` is neither in `failures` nor `task.config`. But the mechanism
-above suggests the seed is load-bearing rather than incidental.
+setting. Also, `seed` is neither in `failures` nor `task.config`. But the mechanism
+above suggests that the seed matters for this result.
 
-At `0.25` exactly one of four agents is marked byzantine, chosen by shuffling the
+At `0.25`, one of four agents is chosen as byzantine by shuffling the
 agent list with the seeded failure RNG (`simulator.py:252`):
 
 ```python
@@ -152,46 +151,46 @@ self._failure_rng.shuffle(shuffled)
 self._byzantine_agents = set(shuffled[:n_byzantine])
 ```
 
-A different seed shuffles differently and should corrupt a different agent. Combined
+Consequently, a different seed is likely to corrupt a different agent. Combined
 with the magnitude sweep above, which showed that corrupting a mid-chain agent
-truncates the pipeline, the prediction is:
+truncates the pipeline, I predict the following:
 
 > The clean PASS/PASS result should reproduce only on seeds that happen to select
 > `retailer-0`. Seeds selecting `supplier-0`, `manufacturer-0` or `distributor-0`
-> should truncate the chain and fail `no_lost` — roughly one seed in four preserving
-> the headline, if selection is uniform across the four agents.
+> should truncate the chain and fail `no_lost`, roughly one seed in four will preserve
+> the finding, assuming selection is uniform across the four agents.
 
-If that holds, the finding is sharper than a single run suggests: **the same failure
-mode, at the same magnitude, reports pass or fail depending on which agent the RNG
-picks.** Reproducibility would be intact, since the seed guarantees it, while the
-verdict itself would be fixed by a coin flip at scenario-authoring time. Twelve runs
-varying only `seed` would settle it.
+If so, the finding sharpens further. the same failure mode, at the same magnitude, 
+reports pass or fail depending on which agent the RNG
+picks. Reproducibility would be intact because of the seed, but the verdict itself 
+relies upon the seed choice at scenario-authoring time. Twelve runs varying only
+`seed` would confirm this.
 
 ## Suggested fix
 
-Narrow, and with precedent already in the file. Add a third `supply_chain` validator
-that reads `receive` events and compares the delivered payload against the sent
-payload for the same `corr` ID. The trace records both, and five validators for
-other scenarios already iterate receives, so neither new instrumentation nor a new
-pattern is needed.
+Add a third `supply_chain` validator that reads `receive` events and compares 
+the delivered and sent payloads with same `corr` ID. The trace records both, 
+and five validators for other scenarios already iterate receives. Neither a new 
+instrumentation nor a new pattern is required.
 
 ## Reproducing
 
-Run from the repository root. Output lands in the gitignored root `traces/`, so it
+Run from the repository root. Output goes to the gitignored root `traces/`, so it
 will not overwrite the committed evidence:
 
 ```bash
 nest run ./examples/supply-chain-byzantine-blind-spot/my.yaml
 ```
 
-That reproduces `traces/my_supply_chain_scenario.jsonl` byte-for-byte identically to
+This reproduces `traces/my_supply_chain_scenario.jsonl` byte-for-byte identically to
 the copy committed here (sha256 `59db3cc7…`).
 
-Then the validators. Two things to watch: use `python3.13` rather than `python3` if
-`nest` was installed under the python.org framework build, and pass `supply_chain`
-as the scenario key, **not** this scenario's own name. `validate_events` resolves
-checks via `VALIDATORS.get(scenario_type, [])`, so a mismatched name runs zero
-validators, prints nothing, and exits 0 — which looks exactly like a pass.
+Also, two things to watch regarding the validators. Use `python3.13` rather than 
+`python3` if `nest` was installed under the python.org framework build. 
+Pass `supply_chain` as the scenario key (not this scenario's own name). 
+`validate_events` resolves checks via `VALIDATORS.get(scenario_type, [])`, so a 
+mismatched name runs zero validators, prints nothing, and exits 0,
+which looks like a pass.
 
 ```bash
 python3.13 -c "
@@ -203,7 +202,7 @@ for r in validate_trace(Path(p), 'supply_chain'):
 "
 ```
 
-And to see what those two green lines are hiding:
+And to see what that misses:
 
 ```bash
 python3.13 -c "
@@ -224,9 +223,10 @@ Note that `.gitignore` excludes `traces/` at any depth, so the traces here were
 added with `git add -f`. Regenerating and re-committing them needs the same flag.
 
 **Versions.** The run above used `nest-core` 0.1.4 from PyPI, which is older than
-this branch's source — `validators.py` has grown since. The two `supply_chain`
-validators are byte-identical between the two, so the results reproduce either way,
-but line numbers cited above refer to this branch's source rather than the wheel.
+this branch's source (`validators.py` has grown since). The two `supply_chain`
+validators are byte-identical between the two, so the results are reproducible 
+regardless. But line numbers cited above refer to this branch's source rather than
+the wheel.
 
 ## Files
 
@@ -240,32 +240,32 @@ but line numbers cited above refer to this branch's source rather than the wheel
 
 ## Relation to other submissions
 
-Two open PRs overlap in part, and this is not a claim to be first:
+Two open PRs overlap in part:
 
 - **#89** runs a `byzantine_agents` experiment on `marketplace` rather than
   `supply_chain`.
-- **#87** reports a validator blind spot on `consensus`, but a liveness one.
+- **#87** reports a validator blind spot on `consensus`, but one related to liveness.
 
-What is distinct here is the class of failure: an **integrity** violation that no
+The class of failure is distinct. An integrity violation that no
 validator can observe at any magnitude, where the multi-hop chain makes the
 difference between a caught and an uncaught failure depend on the corrupted agent's
 position in the pipeline.
 
 ## Use of AI
 
-I used Claude (Anthropic) heavily throughout, and the specifics matter for judging
-what is mine:
+I used Claude Code running Opus 5 on Ultracode throughout. The specifics are below,
+and I attached a sample prompt in the form submission.
 
 - **Mine:** choosing `byzantine_agents` as the setting and the reasoning for it,
-  writing the hypothesis in `my.yaml` before running, and deciding the result was
-  worth investigating rather than filing as a pass.
-- **Claude's:** reading `simulator.py` and `validators.py` to locate the mechanism —
-  the delivery-time corruption and the send-only guard, which is what turned "the
-  validator didn't fire" into an explained finding rather than a shrug. It also ran
-  the magnitude sweep, generated the comparison report, and drafted this README.
-- **Worth stating plainly:** the finding did not come from reading the run output.
-  The run output looks completely normal, which is the entire point. It came from
-  reading the validator source to find out *why* nothing fired.
+  writing the hypothesis in `my.yaml` before running the experiment, and deciding
+  to investigate the unexpected (no visible failure) result.
+- **Claude's:** confirming my understanding of the repo's layout and reading
+`simulator.py` and `validators.py` to locate the failure mechanism.
+I also had it run the magnitude sweep, generate the comparison report, and 
+draft the first version of this README.
+- **Note:** my finding did not come from reading the run output.
+  The run output looks completely normal, which is the point. It came from
+  reading the validator source to understand why it was not flagged.
 
 Claude also diagnosed two unrelated packaging problems while setting up: `nest
 dashboard` cannot find `apps/dashboard/index.html` from a pip-only install because
