@@ -99,11 +99,27 @@ The validators reconstruct the protocol from the send records alone. A payload d
 between sender and receiver leaves that reconstruction perfectly intact. The
 corruption is therefore invisible by construction.
 
-This is not a limitation of the validator framework. Five validators
-elsewhere in the same file inspect `receive` events (lines 2483, 2711, 2833,
-4453, 4786). The capability exists and is used for other scenarios. But it currently
-is not applied to `supply_chain`. That being said, a multi-hop chain of custody is 
-an environment in which delivered-payload integrity matters a lot.
+This is not a limitation of the validator framework. Eight registered validators
+across five scenario keys read `receive` events, directly or through helpers:
+
+| scenario key | validators reading `receive` |
+|---|---|
+| `comms_versioning` | `validate_comms_reject_unknown_major`, `validate_comms_no_silent_drop` |
+| `comms_downgrade` | `validate_comms_downgrade_resistance`, `validate_comms_authentic_delivery` |
+| `comms_replay` | `validate_comms_replay_resistance`, `validate_comms_replay_honest_delivery` |
+| `failure_detection` | `validate_failure_detection_accuracy` |
+| `failure_detection_forgery` | `validate_failure_detection_accuracy`, `validate_failure_detection_no_forged_liveness` |
+
+The helper `_collect_comms_wire` (`validators.py:2472`) states the principle
+outright in its docstring (`:2477`):
+
+> Reads ground truth from the bytes a receiver actually *received*
+
+So the capability exists, the codebase articulates why it matters, and it is
+applied precisely to the authenticity and integrity scenarios — protocol
+downgrade, replay, forged liveness. It is simply not applied to `supply_chain`,
+even though a multi-hop chain of custody is an environment in which
+delivered-payload integrity matters a lot.
 
 In summary, the validators do not check that a message arrived as sent. They
 check that the sender claimed to send it. This byzantine corruption experiment 
@@ -170,8 +186,8 @@ relies upon the seed choice at scenario-authoring time. Twelve runs varying only
 
 Add a third `supply_chain` validator that reads `receive` events and compares 
 the delivered and sent payloads with same `corr` ID. The trace records both, 
-and five validators for other scenarios already iterate receives. Neither a new 
-instrumentation nor a new pattern is required.
+and the comms and failure-detection validators already do exactly this kind of 
+wire-level comparison. Neither new instrumentation nor a new pattern is required.
 
 ## Reproducing
 
