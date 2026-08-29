@@ -103,7 +103,7 @@ This is not a limitation of the validator framework. Five validators
 elsewhere in the same file inspect `receive` events (lines 2483, 2711, 2833,
 4453, 4786). The capability exists and is used for other scenarios. But it currently
 is not applied to `supply_chain`. That being said, a multi-hop chain of custody is 
-an enivronment in which delivered-payload integrity matters a lot.
+an environment in which delivered-payload integrity matters a lot.
 
 In summary, the validators do not check that a message arrived as sent. They
 check that the sender claimed to send it. This byzantine corruption experiment 
@@ -160,7 +160,7 @@ truncates the pipeline, I predict the following:
 > should truncate the chain and fail `no_lost`, roughly one seed in four will preserve
 > the finding, assuming selection is uniform across the four agents.
 
-If so, the finding sharpens further. the same failure mode, at the same magnitude, 
+If so, the finding sharpens further. The same failure mode, at the same magnitude, 
 reports pass or fail depending on which agent the RNG
 picks. Reproducibility would be intact because of the seed, but the verdict itself 
 relies upon the seed choice at scenario-authoring time. Twelve runs varying only
